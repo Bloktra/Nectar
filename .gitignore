@@ -23,3 +23,5 @@ logs
 .env.*
 !.env.example
 !.env.development.sample
+package-lock.json
+pnpm-lock.yaml
