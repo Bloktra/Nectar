@@ -1,0 +1,25 @@
+{
+  "name": "Bloktra Nectar",
+  "image": "mcr.microsoft.com/devcontainers/javascript-node:20-bullseye",
+  "features": {
+    "ghcr.io/devcontainers/features/github-cli:1": {}
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "Vue.volar",
+        "Nuxtr.nuxtr-vscode",
+        "bradlc.vscode-tailwindcss",
+        "GitHub.copilot",
+        "GitHub.copilot-chat"
+      ]
+    }
+  },
+  "portsAttributes": {
+    "3000": {
+      "label": "nuxt3-app"
+    }
+  },
+  "forwardPorts": [3000],
+  "postCreateCommand": "npm install"
+}
