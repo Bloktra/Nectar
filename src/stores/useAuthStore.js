@@ -1,112 +1,183 @@
-import { defineStore } from "pinia";
-import Cookies from "js-cookie";
+import { defineStore } from 'pinia'
+import { ref, computed } from 'vue'
 
-export const useAuthStore = defineStore("auth", {
-  state: () => ({
-    user: null,
-    token: Cookies.get("token") || null,
-    isAuthenticated: !!Cookies.get("token"),
-  }),
+export const useAuthStore = defineStore('auth', () => {
+  const token = ref(null)
+  const user = ref(null)
+  const loading = ref(false)
+  const error = ref(null)
 
-  getters: {
-    getUser: (state) => state.user,
-    getToken: (state) => state.token,
-    isUserAuthenticated: (state) => state.isAuthenticated,
-  },
+  if (import.meta.client) {
+    const savedToken = localStorage.getItem('auth_token')
+    if (savedToken) {
+      token.value = savedToken
+    }
+  }
 
-  actions: {
-    async login(credentials) {
-      try {
-        const response = await fetch("http://your-api-url/api/auth/login", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(credentials),
-        });
+  const isAuthenticated = computed(() => !!token.value)
+  const isAdmin = computed(() => user.value?.roles?.includes('ROLE_ADMIN') ?? false)
 
-        if (!response.ok) {
-          throw new Error("Login failed");
-        }
+  const apiClient = async (endpoint, options = {}) => {
+    const headers = {
+      'Content-Type': 'application/json',
+      ...(token.value ? { Authorization: `Bearer ${token.value}` } : {}),
+      ...options.headers
+    }
 
-        const data = await response.json();
-        this.setToken(data.token);
-        await this.fetchUser();
+    const response = await fetch(`/api${endpoint}`, {
+      ...options,
+      headers
+    })
 
-        return { success: true };
-      } catch (error) {
-        console.error("Login error:", error);
-        return {
-          success: false,
-          error: error.message || "Login failed",
-        };
-      }
-    },
+    if (!response.ok) {
+      const error = await response.json()
+      throw new Error(error.message || 'API request failed')
+    }
 
-    async register(credentials) {
-      try {
-        const response = await fetch("http://your-api-url/api/auth/register", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(credentials),
-        });
+    return response.json()
+  }
 
-        if (!response.ok) {
-          const error = await response.json();
-          throw new Error(error.message || "Registration failed");
-        }
+  async function register(data) {
+    loading.value = true
+    error.value = null
+    
+    try {
+      const response = await apiClient('/auth/register', {
+        method: 'POST',
+        body: JSON.stringify(data)
+      })
+      
+      setToken(response.token)
+      await fetchUser()
+      return true
+    } catch (e) {
+      error.value = e.message
+      return false
+    } finally {
+      loading.value = false
+    }
+  }
 
-        return await this.login({
-          username: credentials.email,
-          password: credentials.password,
-        });
-      } catch (error) {
-        console.error("Registration error:", error);
-        return {
-          success: false,
-          error: error.message || "Registration failed",
-        };
-      }
-    },
+  async function login(credentials) {
+    loading.value = true
+    error.value = null
+    
+    try {
+      const response = await apiClient('/auth/login', {
+        method: 'POST',
+        body: JSON.stringify(credentials)
+      })
+      
+      setToken(response.token)
+      await fetchUser()
+      return true
+    } catch (e) {
+      error.value = e.message
+      return false
+    } finally {
+      loading.value = false
+    }
+  }
 
-    async fetchUser() {
-      try {
-        const response = await fetch("http://your-api-url/api/user/me", {
-          headers: {
-            Authorization: `Bearer ${this.token}`,
-          },
-        });
+  async function loginWithGithub() {
+    window.location.href = '/api/connect/github'
+  }
 
-        if (!response.ok) {
-          throw new Error("Failed to fetch user");
-        }
+  async function loginWithDiscord() {
+    window.location.href = '/api/connect/discord'
+  }
 
-        const userData = await response.json();
-        this.setUser(userData);
-      } catch (error) {
-        console.error("Fetch user error:", error);
-        this.logout();
-      }
-    },
+  async function handleOAuthCallback(provider, code) {
+    loading.value = true
+    error.value = null
+    
+    try {
+      const response = await apiClient(`/connect/${provider}/check`, {
+        method: 'GET',
+        params: { code }
+      })
+      
+      setToken(response.token)
+      await fetchUser()
+      return true
+    } catch (e) {
+      error.value = e.message
+      return false
+    } finally {
+      loading.value = false
+    }
+  }
 
-    setToken(token) {
-      this.token = token;
-      this.isAuthenticated = true;
-      Cookies.set("token", token, { expires: 7 });
-    },
+  function setToken(newToken) {
+    token.value = newToken
+    if (import.meta.client) {
+      localStorage.setItem('auth_token', newToken)
+    }
+  }
 
-    setUser(user) {
-      this.user = user;
-    },
+  async function fetchUser() {
+    if (!token.value) return null
+    
+    try {
+      const userData = await apiClient('/me')
+      user.value = userData
+      return userData
+    } catch (e) {
+      error.value = e.message
+      logout()
+      return null
+    }
+  }
 
-    logout() {
-      this.user = null;
-      this.token = null;
-      this.isAuthenticated = false;
-      Cookies.remove("token");
-      navigateTo("/login");
-    },
-  },
-});
+  function logout() {
+    token.value = null
+    user.value = null
+    if (import.meta.client) {
+      localStorage.removeItem('auth_token')
+    }
+  }
+
+  let refreshPromise = null
+  async function refreshToken() {
+    if (!token.value) return null
+    
+    if (refreshPromise) return refreshPromise
+    
+    refreshPromise = apiClient('/auth/refresh', {
+      method: 'POST',
+      body: JSON.stringify({ refresh_token: token.value })
+    })
+      .then(response => {
+        setToken(response.token)
+        return response.token
+      })
+      .catch(() => {
+        logout()
+        return null
+      })
+      .finally(() => {
+        refreshPromise = null
+      })
+    
+    return refreshPromise
+  }
+
+  return {
+    token,
+    user,
+    loading,
+    error,
+    
+    isAuthenticated,
+    isAdmin,
+    
+    register,
+    login,
+    loginWithGithub,
+    loginWithDiscord,
+    handleOAuthCallback,
+    logout,
+    fetchUser,
+    refreshToken
+  }
+})
