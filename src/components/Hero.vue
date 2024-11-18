@@ -59,7 +59,7 @@ import {
     </div>
     <div class="absolute inset-0 -z-10 opacity-[1.5%]">
       <div
-        class="absolute inset-0 bg-[url(https://i.imgur.com/V1sqhvf.jpeg)] bg-contain"
+        class="absolute inset-0 bg-[url(/img/bg.jpeg)] bg-contain"
       ></div>
     </div>
   </div>

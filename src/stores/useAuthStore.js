@@ -1,21 +1,28 @@
-import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
-
 export const useAuthStore = defineStore('auth', () => {
   const token = ref(null)
   const user = ref(null)
   const loading = ref(false)
   const error = ref(null)
 
-  if (import.meta.client) {
-    const savedToken = localStorage.getItem('auth_token')
-    if (savedToken) {
-      token.value = savedToken
-    }
-  }
-
   const isAuthenticated = computed(() => !!token.value)
   const isAdmin = computed(() => user.value?.roles?.includes('ROLE_ADMIN') ?? false)
+
+  const authCookie = useCookie('auth-token', {
+    maxAge: 60 * 60 * 24 * 365 * 10,
+    sameSite: "lax",
+    secure: true,
+    httpOnly: false,
+    path: "/",
+  })
+
+  if (authCookie.value) {
+    console.log('Auth cookie found:', authCookie.value)
+    token.value = authCookie.value
+    console.log('Token set:', token.value)
+    console.log('Is Authenticated:', isAuthenticated.value)
+  } else {
+    console.log('No auth cookie found')
+  }
 
   const apiClient = async (endpoint, options = {}) => {
     const headers = {
@@ -24,10 +31,17 @@ export const useAuthStore = defineStore('auth', () => {
       ...options.headers
     }
 
-    const response = await fetch(`/api${endpoint}`, {
+    const response = await fetch(`http://127.0.0.1:8000${endpoint}`, {
       ...options,
       headers
     })
+
+    if (response.status === 401 && token.value) {
+      const refreshed = await refreshToken()
+      if (refreshed) {
+        return apiClient(endpoint, options)
+      }
+    }
 
     if (!response.ok) {
       const error = await response.json()
@@ -79,14 +93,6 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  async function loginWithGithub() {
-    window.location.href = '/api/connect/github'
-  }
-
-  async function loginWithDiscord() {
-    window.location.href = '/api/connect/discord'
-  }
-
   async function handleOAuthCallback(provider, code) {
     loading.value = true
     error.value = null
@@ -110,8 +116,10 @@ export const useAuthStore = defineStore('auth', () => {
 
   function setToken(newToken) {
     token.value = newToken
-    if (import.meta.client) {
-      localStorage.setItem('auth_token', newToken)
+    if (newToken) {
+      authCookie.value = newToken
+    } else {
+      authCookie.value = null
     }
   }
 
@@ -132,9 +140,7 @@ export const useAuthStore = defineStore('auth', () => {
   function logout() {
     token.value = null
     user.value = null
-    if (import.meta.client) {
-      localStorage.removeItem('auth_token')
-    }
+    authCookie.value = null
   }
 
   let refreshPromise = null
@@ -162,22 +168,27 @@ export const useAuthStore = defineStore('auth', () => {
     return refreshPromise
   }
 
+  if (token.value) {
+    fetchUser()
+  }
+
   return {
+    // State
     token,
     user,
     loading,
     error,
     
+    // Getters
     isAuthenticated,
     isAdmin,
     
+    // Actions
     register,
     login,
-    loginWithGithub,
-    loginWithDiscord,
     handleOAuthCallback,
     logout,
     fetchUser,
-    refreshToken
+    refreshToken,
   }
 })
